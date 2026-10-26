@@ -2,6 +2,7 @@ import os, time, threading, requests
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from flask import Flask
 from datetime import datetime
 
@@ -31,39 +32,51 @@ def get_all_prices():
 def create_chart():
     try:
         r = requests.get('https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600', timeout=15).json()
-        closes = [c[4] for c in r[:24]][::-1]
+        # r = [time, low, high, open, close, volume] - last 24h
+        candles = r[:24][::-1]
         
-        plt.figure(figsize=(10, 3.5), facecolor='#131b2e')
-        ax = plt.gca()
+        fig, ax = plt.subplots(figsize=(12, 4), facecolor='#131b2e')
         ax.set_facecolor('#131b2e')
         
-        # Proper scaling - not 0 to 80k
-        plt.plot(closes, color='#f7931a', linewidth=2.2)
-        plt.fill_between(range(len(closes)), closes, alpha=0.15, color='#f7931a')
+        for i, c in enumerate(candles):
+            t, low, high, open_p, close_p, vol = c
+            color = '#26a69a' if close_p >= open_p else '#ef5350'  # Green/Red
+            
+            # Wick (high-low line)
+            ax.plot([i, i], [low, high], color=color, linewidth=1)
+            # Body (open-close)
+            body_height = abs(close_p - open_p)
+            body_bottom = min(open_p, close_p)
+            rect = mpatches.Rectangle((i-0.3, body_bottom), 0.6, max(body_height, (high-low)*0.02), 
+                                      facecolor=color, edgecolor=color)
+            ax.add_patch(rect)
         
-        plt.title('BTC Last 24H', color='#8a8fa8', fontsize=10, pad=10)
-        plt.xticks([])
-        plt.yticks([])
-        plt.box(False)
+        # Logo watermark
+        ax.text(0.5, 0.90, '@Cryptopricemomentum', 
+                transform=ax.transAxes,
+                fontsize=12, color='#131b2e', fontweight='bold',
+                ha='center', va='center',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='none', alpha=0.95))
         
-        # Auto zoom
-        min_p = min(closes) * 0.999
-        max_p = max(closes) * 1.001
-        plt.ylim(min_p, max_p)
+        ax.set_title('BTC 24H CANDLE CHART', color='#8a8fa8', fontsize=10, pad=15)
+        ax.set_xlim(-1, len(candles))
+        ax.tick_params(colors='#8a8fa8')
+        for spine in ax.spines.values():
+            spine.set_color('#334155')
+        ax.grid(True, alpha=0.1, color='white')
         
         plt.tight_layout()
-        path = '/tmp/btc_chart.png'
-        plt.savefig(path, dpi=200, facecolor='#131b2e', bbox_inches='tight', pad_inches=0.1)
+        path = '/tmp/btc_candle.png'
+        plt.savefig(path, dpi=200, facecolor='#131b2e', bbox_inches='tight')
         plt.close()
         return path
     except Exception as e:
-        print(f"Chart error: {e}")
+        print(f"Candle error: {e}")
         return None
 
 def format_msg(prices):
-    # UTC TIME
     utc_time = datetime.utcnow().strftime('%H:%M UTC')
-    msg = f"🚀 CRYPTO MOMENTUM - {utc_time}\n\n"
+    msg = f"🕯️ CRYPTO MOMENTUM - {utc_time}\n\n"
     for sym, name in COINS.items():
         price = prices.get(sym, 0)
         if price:
@@ -71,7 +84,7 @@ def format_msg(prices):
                 msg += f"{name}: ${price:.4f}\n"
             else:
                 msg += f"{name}: ${price:,.2f}\n"
-    msg += f"\n📊 24H BTC Momentum\n⏰ Auto every 5 mins"
+    msg += f"\n📊 24H Candle Momentum\n🔗 @Cryptopricemomentum"
     return msg
 
 def send_to_telegram(prices, chart_path):
@@ -104,7 +117,7 @@ threading.Thread(target=price_loop, daemon=True).start()
 
 @app.route("/")
 def home():
-    return "Pro Bot Running!"
+    return "Candle Bot Running!"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
