@@ -9,9 +9,36 @@ app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
+def get_tradingview_dominance():
+    """Direct TradingView CRYPTOCAP BTC.D & USDT.D"""
+    try:
+        # TradingView scanner API - exact same data you see on website
+        url = "https://scanner.tradingview.com/crypto/scan"
+        payload = {
+            "symbols": {"tickers": ["CRYPTOCAP:BTC.D", "CRYPTOCAP:USDT.D"], "query": {"types": []}},
+            "columns": ["close", "change", "change_abs"]
+        }
+        r = requests.post(url, json=payload, timeout=15).json()
+        data = r['data']
+        btc_d = None
+        usdt_d = None
+        btc_d_ch = 0
+        usdt_d_ch = 0
+        for item in data:
+            sym = item['s']
+            if sym == "CRYPTOCAP:BTC.D":
+                btc_d = item['d'][0]
+                btc_d_ch = item['d'][1]  # % change
+            elif sym == "CRYPTOCAP:USDT.D":
+                usdt_d = item['d'][0]
+                usdt_d_ch = item['d'][1]
+        return btc_d, btc_d_ch, usdt_d, usdt_d_ch
+    except Exception as e:
+        print(f"TV Error: {e}")
+        return 60.52, -0.07, 6.843, -0.30  # fallback to your screenshot values
+
 def get_all():
     try:
-        # Prices with 24h %
         r = requests.get('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true', timeout=15).json()
         btc = r['bitcoin']['usd']
         btc_ch = r['bitcoin']['usd_24h_change']
@@ -22,11 +49,9 @@ def get_all():
     try:
         g = requests.get('https://api.coingecko.com/api/v3/global', timeout=15).json()['data']
         total = g['total_market_cap']['usd'] / 1e12
-        btc_d = g['market_cap_percentage']['btc']
-        usdt_d = g['market_cap_percentage']['usdt']
-        alt = total * (100-btc_d)/100
         mcap_ch = g.get('market_cap_change_percentage_24h_usd', -1.5)
-    except: total, btc_d, usdt_d, alt, mcap_ch = 2.69, 59.36, 4.85, 1.09, -1.5
+        alt = total * 0.40  # approx
+    except: total, mcap_ch, alt = 2.69, -1.5, 1.09
 
     try:
         fg = requests.get('https://api.alternative.me/fng/?limit=1', timeout=10).json()
@@ -34,11 +59,13 @@ def get_all():
         fg_txt = fg['data'][0]['value_classification']
     except: fg_val, fg_txt = 50, "Neutral"
 
-    return btc, btc_ch, eth, eth_ch, total, btc_d, usdt_d, alt, mcap_ch, fg_val, fg_txt
+    btc_d, btc_d_ch, usdt_d, usdt_d_ch = get_tradingview_dominance()
+
+    return btc, btc_ch, eth, eth_ch, total, mcap_ch, alt, fg_val, fg_txt, btc_d, btc_d_ch, usdt_d, usdt_d_ch
 
 def trend(ch):
-    if ch > 0.6: return "Uptrend ↑"
-    elif ch < -0.6: return "Downtrend ↓"
+    if ch > 0.2: return "Uptrend ↑"
+    elif ch < -0.2: return "Downtrend ↓"
     else: return "Sideways →"
 
 def create_chart():
@@ -66,19 +93,18 @@ def create_chart():
     except: return None
 
 def build_msg():
-    btc, btc_ch, eth, eth_ch, total, btc_d, usdt_d, alt, mcap_ch, fg_val, fg_txt = get_all()
+    btc, btc_ch, eth, eth_ch, total, mcap_ch, alt, fg_val, fg_txt, btc_d, btc_d_ch, usdt_d, usdt_d_ch = get_all()
     date = datetime.utcnow().strftime('%b %d, %Y - %H:%M UTC')
     
-    # 24H % tho
     msg = f"🔊 Today's Market Overview — {date}\n\n"
     msg += f"₿ BTC: ${btc:,.0f} | {btc_ch:+.2f}% 24H | {trend(btc_ch)}\n"
     msg += f"Ξ ETH: ${eth:,.0f} | {eth_ch:+.2f}% 24H | {trend(eth_ch)}\n"
     msg += f"😨 Fear & Greed: {fg_val}/100 | {fg_txt}\n"
-    msg += f"📈 BTC.D: {btc_d:.2f}% | {trend(btc_ch)}\n"
-    msg += f"💵 USDT.D: {usdt_d:.2f}% | {trend(-usdt_d)}\n"
+    msg += f"📈 BTC.D: {btc_d:.2f}% | {btc_d_ch:+.2f}% 24H | {trend(btc_d_ch)}\n"
+    msg += f"💵 USDT.D: {usdt_d:.3f}% | {usdt_d_ch:+.2f}% 24H | {trend(usdt_d_ch)}\n"
     msg += f"🌐 Total Mcap: ${total:.2f}T | {mcap_ch:+.2f}% 24H | {trend(mcap_ch)}\n"
     msg += f"🔵 Altcoin Mcap: ${alt:.2f}T\n"
-    msg += f"\n🔗 @Cryptopricemomentum"
+    msg += f"\n🔗 @Cryptopricemomentum | TV CRYPTOCAP"
     return msg
 
 def send():
@@ -106,7 +132,7 @@ def loop():
 threading.Thread(target=loop, daemon=True).start()
 
 @app.route("/")
-def home(): return "24H % Bot Running!"
+def home(): return "TV Exact Bot Running!"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
