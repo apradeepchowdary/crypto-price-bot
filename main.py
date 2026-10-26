@@ -14,20 +14,34 @@ print(f"CHANNEL_ID: {CHANNEL_ID}", flush=True)
 
 def get_price():
     try:
-        print("Fetching price from CoinGecko...", flush=True)
+        print("Fetching price from Binance...", flush=True)
+        # Binance API - No limit, always works
         r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd",
+            'https://api.binance.com/api/v3/ticker/price?symbols=["BTCUSDT","ETHUSDT"]',
             timeout=15
         )
-        print(f"CoinGecko status: {r.status_code}", flush=True)
+        print(f"Binance status: {r.status_code}", flush=True)
         data = r.json()
-        btc = data['bitcoin']['usd']
-        eth = data['ethereum']['usd']
+        # data = [{"symbol":"BTCUSDT","price":"..."}, {"symbol":"ETHUSDT","price":"..."}]
+        btc = float(data[0]['price']) if data[0]['symbol']=='BTCUSDT' else float(data[1]['price'])
+        eth = float(data[1]['price']) if data[1]['symbol']=='ETHUSDT' else float(data[0]['price'])
+        
         msg = f"🚀 Crypto Price Update\n\n₿ Bitcoin: ${btc:,.2f}\nΞ Ethereum: ${eth:,.2f}\n\n⏰ Auto every 5 mins"
         print(f"Price msg ready: {msg}", flush=True)
         return msg
     except Exception as e:
         print(f"Price fetch error: {e}", flush=True)
+        # Fallback to CoinGecko with delay
+        try:
+            time.sleep(2)
+            r = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd", timeout=15)
+            if r.status_code == 200:
+                d = r.json()
+                btc = d['bitcoin']['usd']
+                eth = d['ethereum']['usd']
+                return f"🚀 Crypto Price Update\n\n₿ Bitcoin: ${btc:,.2f}\nΞ Ethereum: ${eth:,.2f}"
+        except:
+            pass
         return None
 
 def send_to_telegram(msg):
@@ -35,11 +49,9 @@ def send_to_telegram(msg):
         if not BOT_TOKEN or not CHANNEL_ID:
             print("Missing BOT_TOKEN or CHANNEL_ID", flush=True)
             return
-        
         chat_id = CHANNEL_ID.strip()
-        if not chat_id.startswith("@") and not chat_id.startswith("-100"):
+        if not chat_id.startswith("@") and not chat_id.startswith("-"):
             chat_id = "@" + chat_id
-        
         print(f"Sending to: {chat_id}", flush=True)
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {"chat_id": chat_id, "text": msg}
