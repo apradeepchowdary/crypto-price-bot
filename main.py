@@ -9,52 +9,39 @@ app = Flask(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-def get_btc_price():
+def get_all():
     try:
-        r = requests.get('https://api.coinbase.com/v2/prices/BTC-USD/spot', timeout=10).json()
-        return float(r['data']['amount'])
-    except: return 80129
+        # Prices with 24h %
+        r = requests.get('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true', timeout=15).json()
+        btc = r['bitcoin']['usd']
+        btc_ch = r['bitcoin']['usd_24h_change']
+        eth = r['ethereum']['usd']
+        eth_ch = r['ethereum']['usd_24h_change']
+    except: btc, btc_ch, eth, eth_ch = 80237, -1.24, 2324, -0.85
 
-def get_eth_price():
     try:
-        r = requests.get('https://api.coinbase.com/v2/prices/ETH-USD/spot', timeout=10).json()
-        return float(r['data']['amount'])
-    except: return 2319
+        g = requests.get('https://api.coingecko.com/api/v3/global', timeout=15).json()['data']
+        total = g['total_market_cap']['usd'] / 1e12
+        btc_d = g['market_cap_percentage']['btc']
+        usdt_d = g['market_cap_percentage']['usdt']
+        alt = total * (100-btc_d)/100
+        mcap_ch = g.get('market_cap_change_percentage_24h_usd', -1.5)
+    except: total, btc_d, usdt_d, alt, mcap_ch = 2.69, 59.36, 4.85, 1.09, -1.5
 
-def get_fear_greed():
     try:
-        r = requests.get('https://api.alternative.me/fng/?limit=1', timeout=10).json()
-        data = r['data'][0]
-        return int(data['value']), data['value_classification']
-    except: return 50, "Neutral"
+        fg = requests.get('https://api.alternative.me/fng/?limit=1', timeout=10).json()
+        fg_val = int(fg['data'][0]['value'])
+        fg_txt = fg['data'][0]['value_classification']
+    except: fg_val, fg_txt = 50, "Neutral"
 
-def get_global():
-    try:
-        r = requests.get('https://api.coingecko.com/api/v3/global', timeout=15).json()
-        data = r['data']
-        total_mcap = data['total_market_cap']['usd'] / 1e12
-        btc_dom = data['market_cap_percentage']['btc']
-        # Altcoin = Total2 approximation
-        alt_mcap = total_mcap * (100 - btc_dom) / 100
-        # For trend - use market_cap_change_percentage_24h_usd
-        change = data.get('market_cap_change_percentage_24h_usd', 0)
-        return total_mcap, btc_dom, alt_mcap, change
-    except:
-        return 2.69, 59.36, 1.09, 0
+    return btc, btc_ch, eth, eth_ch, total, btc_d, usdt_d, alt, mcap_ch, fg_val, fg_txt
 
-def get_trending_coins():
-    try:
-        r = requests.get('https://api.coingecko.com/api/v3/search/trending', timeout=15).json()
-        coins = [c['item']['symbol'].upper() for c in r['coins'][:4]]
-        return " · ".join(coins)
-    except: return "TUSDT · DODO · DOOD · ANIME"
-
-def get_trend(change_pct=0):
-    if change_pct > 1: return "Uptrend ↑"
-    elif change_pct < -1: return "Downtrend ↓"
+def trend(ch):
+    if ch > 0.6: return "Uptrend ↑"
+    elif ch < -0.6: return "Downtrend ↓"
     else: return "Sideways →"
 
-def create_candle_chart():
+def create_chart():
     try:
         r = requests.get('https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600', timeout=15).json()
         candles = r[:24][::-1]
@@ -64,83 +51,62 @@ def create_candle_chart():
             t, low, high, open_p, close_p, vol = c
             color = '#26a69a' if close_p >= open_p else '#ef5350'
             ax.plot([i, i], [low, high], color=color, linewidth=1.2)
-            body_h = abs(close_p - open_p)
-            body_b = min(open_p, close_p)
-            rect = plt.Rectangle((i-0.35, body_b), 0.7, max(body_h, (high-low)*0.015), facecolor=color, edgecolor=color)
+            rect = plt.Rectangle((i-0.35, min(open_p, close_p)), 0.7, max(abs(close_p-open_p), (high-low)*0.015), facecolor=color, edgecolor=color)
             ax.add_patch(rect)
         ax.text(0.5, 0.92, '@Cryptopricemomentum', transform=ax.transAxes, fontsize=13, color='#131b2e', fontweight='bold', ha='center', va='center', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='none', alpha=0.95))
-        ax.set_title('BTC 24H CANDLE CHART', color='#8a8fa8', fontsize=11, pad=20)
+        ax.set_title('BTC 24H CANDLE', color='#8a8fa8', fontsize=11, pad=20)
         ax.set_xlim(-1, len(candles))
         ax.yaxis.tick_right()
-        ax.tick_params(colors='#a0a0a0', labelsize=9)
         ax.grid(True, alpha=0.15, color='white', linestyle='--')
         plt.tight_layout()
-        path = '/tmp/btc_candle.png'
+        path = '/tmp/btc.png'
         plt.savefig(path, dpi=250, facecolor='#131b2e', bbox_inches='tight')
         plt.close()
         return path
     except: return None
 
-def build_message():
-    btc = get_btc_price()
-    eth = get_eth_price()
-    fg_value, fg_text = get_fear_greed()
-    total_mcap, btc_dom, alt_mcap, mcap_change = get_global()
-    trending = get_trending_coins()
+def build_msg():
+    btc, btc_ch, eth, eth_ch, total, btc_d, usdt_d, alt, mcap_ch, fg_val, fg_txt = get_all()
+    date = datetime.utcnow().strftime('%b %d, %Y - %H:%M UTC')
     
-    # Get 24h change for BTC trend (approx from candle)
-    try:
-        r = requests.get('https://api.coingecko.com/api/v3/coins/bitcoin?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false', timeout=15).json()
-        btc_change = r['market_data']['price_change_percentage_24h']
-        eth_change = requests.get('https://api.coingecko.com/api/v3/coins/ethereum?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false', timeout=10).json()['market_data']['price_change_percentage_24h']
-    except:
-        btc_change = -1.2
-        eth_change = -0.8
-
-    date_str = datetime.utcnow().strftime('%b %d, %Y')
-    
-    msg = f"🔊 Today's Market Overview — {date_str}\n\n"
-    msg += f"BTC: ${btc:,.0f} | {get_trend(btc_change)}\n"
-    msg += f"ETH: ${eth:,.0f} | {get_trend(eth_change)}\n"
-    msg += f"🛡️ Fear & Greed Index: {fg_value}/100 | {fg_text}\n"
-    msg += f"⚡ BTC Dominance: {btc_dom:.2f}% | {get_trend(btc_change)}\n"
-    msg += f"🌐 Total Market Cap: ${total_mcap:.2f}T | {get_trend(mcap_change)}\n"
-    msg += f"🟢 Altcoin Market Cap (Total2): ${alt_mcap:.2f}T | Uptrend ↑\n"
-    msg += f"\n📈 On our traders' radar today: {trending} — tap to analyze\n"
-    msg += f"💸 Money flow (24h): in ⬈ Made in USA +8.5%, Curve Ecosystem +3.4% · out ⬋ Yield Farming -2.4%\n"
+    # 24H % tho
+    msg = f"🔊 Today's Market Overview — {date}\n\n"
+    msg += f"₿ BTC: ${btc:,.0f} | {btc_ch:+.2f}% 24H | {trend(btc_ch)}\n"
+    msg += f"Ξ ETH: ${eth:,.0f} | {eth_ch:+.2f}% 24H | {trend(eth_ch)}\n"
+    msg += f"😨 Fear & Greed: {fg_val}/100 | {fg_txt}\n"
+    msg += f"📈 BTC.D: {btc_d:.2f}% | {trend(btc_ch)}\n"
+    msg += f"💵 USDT.D: {usdt_d:.2f}% | {trend(-usdt_d)}\n"
+    msg += f"🌐 Total Mcap: ${total:.2f}T | {mcap_ch:+.2f}% 24H | {trend(mcap_ch)}\n"
+    msg += f"🔵 Altcoin Mcap: ${alt:.2f}T\n"
     msg += f"\n🔗 @Cryptopricemomentum"
     return msg
 
-def send_to_telegram():
+def send():
+    chat_id = CHANNEL_ID.strip()
+    if not chat_id.startswith("@") and not chat_id.startswith("-"):
+        chat_id = "@" + chat_id
+    msg = build_msg()
+    chart = create_chart()
     try:
-        chat_id = CHANNEL_ID.strip()
-        if not chat_id.startswith("@") and not chat_id.startswith("-"):
-            chat_id = "@" + chat_id
-        msg = build_message()
-        chart = create_candle_chart()
         if chart:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
             with open(chart, 'rb') as f:
-                files = {'photo': f}
-                data = {'chat_id': chat_id, 'caption': msg}
-                requests.post(url, data=data, files=files, timeout=20)
+                requests.post(url, data={'chat_id': chat_id, 'caption': msg}, files={'photo': f}, timeout=20)
         else:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
             requests.post(url, json={"chat_id": chat_id, "text": msg}, timeout=15)
-    except Exception as e:
-        print(f"Send error: {e}")
+    except Exception as e: print(e)
 
-def price_loop():
+def loop():
     time.sleep(10)
     while True:
-        send_to_telegram()
-        time.sleep(3600)  # 1 hour ki okasari market overview
+        send()
+        time.sleep(3600)
 
-threading.Thread(target=price_loop, daemon=True).start()
+threading.Thread(target=loop, daemon=True).start()
 
 @app.route("/")
-def home():
-    return "Market Overview Bot Running!"
+def home(): return "24H % Bot Running!"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
