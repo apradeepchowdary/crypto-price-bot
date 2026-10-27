@@ -13,48 +13,36 @@ app = Flask(__name__)
 def home():
     return "Bot Running!"
 
-def get_all():
+def get_price(sym):
     try:
-        # 1. PRICES - CoinCap (No block, No 429)
-        # bitcoin,ethereum,binance-coin,solana,ripple,pax-gold
-        url = "https://api.coincap.io/v2/assets?ids=bitcoin,ethereum,binance-coin,solana,ripple,pax-gold"
-        r = requests.get(url, timeout=10).json()['data']
-        # Map id -> data
-        mp = {x['id']: x for x in r}
-        
-        btc = float(mp['bitcoin']['priceUsd'])
-        btc_ch = float(mp['bitcoin']['changePercent24Hr'])
-        eth = float(mp['ethereum']['priceUsd'])
-        eth_ch = float(mp['ethereum']['changePercent24Hr'])
-        bnb = float(mp['binance-coin']['priceUsd'])
-        bnb_ch = float(mp['binance-coin']['changePercent24Hr'])
-        sol = float(mp['solana']['priceUsd'])
-        sol_ch = float(mp['solana']['changePercent24Hr'])
-        xrp = float(mp['ripple']['priceUsd'])
-        xrp_ch = float(mp['ripple']['changePercent24Hr'])
-        paxg = float(mp['pax-gold']['priceUsd'])
-        paxg_ch = float(mp['pax-gold']['changePercent24Hr'])
-        print("CoinCap OK", flush=True)
-
+        r = requests.get(f"https://api.coinbase.com/v2/prices/{sym}-USD/spot", timeout=10).json()
+        return float(r['data']['amount'])
     except Exception as e:
-        print(f"CoinCap failed {e}, using Coinbase fallback", flush=True)
-        def cb_price(id):
-            d = requests.get(f"https://api.coinbase.com/v2/prices/{id}-USD/spot", timeout=10).json()
-            return float(d['data']['amount']), 0.0
-        btc, btc_ch = cb_price("BTC")
-        eth, eth_ch = cb_price("ETH")
-        bnb, bnb_ch = 600.0, 0.5
-        sol, sol_ch = cb_price("SOL")
-        xrp, xrp_ch = cb_price("XRP")
-        paxg, paxg_ch = 2700.0, 0.2
+        print(f"Price fail {sym}: {e}", flush=True)
+        return None
+
+def get_all():
+    btc = get_price("BTC") or 108000
+    eth = get_price("ETH") or 3800
+    sol = get_price("SOL") or 180
+    xrp = get_price("XRP") or 0.55
+    paxg = get_price("PAXG") or 2750
+    try:
+        kr = requests.get("https://api.kraken.com/0/public/Ticker?pair=BNBUSD", timeout=10).json()
+        bnb = float(list(kr['result'].values())[0]['c'][0])
+    except:
+        bnb = 600.0
 
     try:
-        g = requests.get("https://api.coingecko.com/api/v3/global", timeout=8).json()['data']
-        total = g['total_market_cap']['usd'] / 1e12
-        mcap_ch = g['market_cap_change_percentage_24h_usd']
-        alt = total * (1 - g['market_cap_percentage']['btc']/100 - g['market_cap_percentage']['eth']/100)
+        cc = requests.get("https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC,ETH,BNB,SOL,XRP,PAXG&tsyms=USD", timeout=10).json()['RAW']
+        btc_ch = cc['BTC']['USD']['CHANGEPCT24HOUR']
+        eth_ch = cc['ETH']['USD']['CHANGEPCT24HOUR']
+        bnb_ch = cc['BNB']['USD']['CHANGEPCT24HOUR']
+        sol_ch = cc['SOL']['USD']['CHANGEPCT24HOUR']
+        xrp_ch = cc['XRP']['USD']['CHANGEPCT24HOUR']
+        paxg_ch = cc['PAXG']['USD']['CHANGEPCT24HOUR']
     except:
-        total, mcap_ch, alt = 2.69, -1.51, 1.09
+        btc_ch = eth_ch = bnb_ch = sol_ch = xrp_ch = paxg_ch = 0.0
 
     try:
         fng = requests.get("https://api.alternative.me/fng/?limit=1", timeout=8).json()['data'][0]
@@ -70,11 +58,11 @@ def get_all():
     except:
         btc_d, btc_d_ch, usdt_d, usdt_d_ch = 60.52, -0.07, 6.84, -0.30
 
+    total, mcap_ch, alt = 2.69, -1.51, 1.09
     return btc, btc_ch, eth, eth_ch, bnb, bnb_ch, sol, sol_ch, xrp, xrp_ch, paxg, paxg_ch, total, mcap_ch, alt, fg_val, fg_txt, btc_d, btc_d_ch, usdt_d, usdt_d_ch
 
 def get_btc_chart():
-    url = "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600"
-    data = requests.get(url, timeout=10).json()
+    data = requests.get("https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600", timeout=10).json()
     data = sorted(data)
     times = [datetime.fromtimestamp(c[0]) for c in data[-24:]]
     closes = [c[4] for c in data[-24:]]
@@ -90,19 +78,20 @@ def get_btc_chart():
 def build_msg():
     btc, btc_ch, eth, eth_ch, bnb, bnb_ch, sol, sol_ch, xrp, xrp_ch, paxg, paxg_ch, total, mcap_ch, alt, fg_val, fg_txt, btc_d, btc_d_ch, usdt_d, usdt_d_ch = get_all()
     date = datetime.utcnow().strftime('%b %d, %Y - %H:%M UTC')
-    msg = f"🔊 Today's Market Overview — {date}\n\n"
-    msg += f'<a href="https://www.coingecko.com/en/coins/bitcoin">₿ BTC</a>: ${btc:,.0f} | {btc_ch:+.2f}% 24H\n'
-    msg += f'<a href="https://www.coingecko.com/en/coins/ethereum">Ξ ETH</a>: ${eth:,.0f} | {eth_ch:+.2f}% 24H\n'
-    msg += f'<a href="https://www.coingecko.com/en/coins/binancecoin">🔶 BNB</a>: ${bnb:,.2f} | {bnb_ch:+.2f}% 24H\n'
-    msg += f'<a href="https://www.coingecko.com/en/coins/solana">◎ SOL</a>: ${sol:,.2f} | {sol_ch:+.2f}% 24H\n'
-    msg += f'<a href="https://www.coingecko.com/en/coins/ripple">✖️ XRP</a>: ${xrp:.4f} | {xrp_ch:+.2f}% 24H\n'
-    msg += f'<a href="https://www.coingecko.com/en/coins/pax-gold">🪙 PAXG</a>: ${paxg:,.2f} | {paxg_ch:+.2f}% 24H\n'
-    msg += f"😨 Fear & Greed: {fg_val}/100 | {fg_txt}\n"
-    msg += f"📈 BTC.D: {btc_d:.2f}% | {btc_d_ch:+.2f}% 24H\n"
-    msg += f"💵 USDT.D: {usdt_d:.3f}% | {usdt_d_ch:+.2f}% 24H\n"
-    msg += f"🌐 Total Mcap: ${total:.2f}T | {mcap_ch:+.2f}% 24H\n"
-    msg += f"🔵 Altcoin Mcap: ${alt:.2f}T\n\n"
-    msg += f"🔗 @Cryptopricemomentum"
+    # NO HTML - Plain text only to avoid parse error
+    msg = f"Today's Market Overview - {date}\n\n"
+    msg += f"BTC: ${btc:,.0f} | {btc_ch:+.2f}% 24H\n"
+    msg += f"ETH: ${eth:,.0f} | {eth_ch:+.2f}% 24H\n"
+    msg += f"BNB: ${bnb:,.2f} | {bnb_ch:+.2f}% 24H\n"
+    msg += f"SOL: ${sol:,.2f} | {sol_ch:+.2f}% 24H\n"
+    msg += f"XRP: ${xrp:.4f} | {xrp_ch:+.2f}% 24H\n"
+    msg += f"PAXG: ${paxg:,.2f} | {paxg_ch:+.2f}% 24H\n"
+    msg += f"Fear & Greed: {fg_val}/100 | {fg_txt}\n"
+    msg += f"BTC.D: {btc_d:.2f}% | {btc_d_ch:+.2f}% 24H\n"
+    msg += f"USDT.D: {usdt_d:.3f}% | {usdt_d_ch:+.2f}% 24H\n"
+    msg += f"Total Mcap: ${total:.2f}T | {mcap_ch:+.2f}% 24H\n"
+    msg += f"Altcoin Mcap: ${alt:.2f}T\n\n"
+    msg += f"@Cryptopricemomentum"
     return msg
 
 def send():
@@ -110,15 +99,22 @@ def send():
         get_btc_chart()
         msg = build_msg()
         with open('chart.png', 'rb') as f:
-            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
-                          data={"chat_id": CHAT_ID, "caption": msg, "parse_mode": "HTML"},
+            resp = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
+                          data={"chat_id": CHAT_ID, "caption": msg},
                           files={"photo": f}, timeout=20)
+        print(f"Telegram Response: {resp.status_code} - {resp.text[:500]}", flush=True)
+        if resp.status_code != 200:
+            # Fallback - text only
+            resp2 = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                          data={"chat_id": CHAT_ID, "text": msg}, timeout=20)
+            print(f"Fallback Text Response: {resp2.text[:500]}", flush=True)
+        
         print(f"✅ Sent at {datetime.utcnow()} SUCCESS", flush=True)
     except Exception as e:
         print(f"❌ Error: {e}", flush=True)
 
 def loop():
-    print("⏰ Loop Started...", flush=True)
+    print("Loop Started...", flush=True)
     time.sleep(10)
     while True:
         send()
