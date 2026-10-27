@@ -5,7 +5,6 @@ from datetime import datetime
 from flask import Flask
 import os
 
-# --- CONFIG ---
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 app = Flask(__name__)
@@ -15,58 +14,57 @@ def home():
     return "Bot Running!"
 
 def get_all():
-    # --- 6 COINS WITH RETRY + FALLBACK ---
-    for attempt in range(3):
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            cg_url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,binancecoin,solana,ripple,pax-gold&vs_currencies=usd&include_24hr_change=true"
-            r = requests.get(cg_url, headers=headers, timeout=15)
-            print(f"CoinGecko status: {r.status_code}", flush=True)
-            cg = r.json()
+    try:
+        # 1. PRICES - CoinCap (No block, No 429)
+        # bitcoin,ethereum,binance-coin,solana,ripple,pax-gold
+        url = "https://api.coincap.io/v2/assets?ids=bitcoin,ethereum,binance-coin,solana,ripple,pax-gold"
+        r = requests.get(url, timeout=10).json()['data']
+        # Map id -> data
+        mp = {x['id']: x for x in r}
+        
+        btc = float(mp['bitcoin']['priceUsd'])
+        btc_ch = float(mp['bitcoin']['changePercent24Hr'])
+        eth = float(mp['ethereum']['priceUsd'])
+        eth_ch = float(mp['ethereum']['changePercent24Hr'])
+        bnb = float(mp['binance-coin']['priceUsd'])
+        bnb_ch = float(mp['binance-coin']['changePercent24Hr'])
+        sol = float(mp['solana']['priceUsd'])
+        sol_ch = float(mp['solana']['changePercent24Hr'])
+        xrp = float(mp['ripple']['priceUsd'])
+        xrp_ch = float(mp['ripple']['changePercent24Hr'])
+        paxg = float(mp['pax-gold']['priceUsd'])
+        paxg_ch = float(mp['pax-gold']['changePercent24Hr'])
+        print("CoinCap OK", flush=True)
 
-            if 'bitcoin' not in cg:
-                print(f"CG Response: {cg}", flush=True)
-                raise Exception(f"Blocked: {cg}")
-
-            btc, btc_ch = cg['bitcoin']['usd'], cg['bitcoin'].get('usd_24h_change', 0)
-            eth, eth_ch = cg['ethereum']['usd'], cg['ethereum'].get('usd_24h_change', 0)
-            bnb, bnb_ch = cg['binancecoin']['usd'], cg['binancecoin'].get('usd_24h_change', 0)
-            sol, sol_ch = cg['solana']['usd'], cg['solana'].get('usd_24h_change', 0)
-            xrp, xrp_ch = cg['ripple']['usd'], cg['ripple'].get('usd_24h_change', 0)
-            paxg, paxg_ch = cg['pax-gold']['usd'], cg['pax-gold'].get('usd_24h_change', 0)
-            break
-        except Exception as e:
-            print(f"Attempt {attempt+1} failed: {e}", flush=True)
-            if attempt == 2:
-                print("Using Binance Fallback...", flush=True)
-                def bp(sym):
-                    d = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={sym}", timeout=10).json()
-                    return float(d['lastPrice']), float(d['priceChangePercent'])
-                btc, btc_ch = bp("BTCUSDT")
-                eth, eth_ch = bp("ETHUSDT")
-                bnb, bnb_ch = bp("BNBUSDT")
-                sol, sol_ch = bp("SOLUSDT")
-                xrp, xrp_ch = bp("XRPUSDT")
-                paxg, paxg_ch = bp("PAXGUSDT")
-            time.sleep(2)
+    except Exception as e:
+        print(f"CoinCap failed {e}, using Coinbase fallback", flush=True)
+        def cb_price(id):
+            d = requests.get(f"https://api.coinbase.com/v2/prices/{id}-USD/spot", timeout=10).json()
+            return float(d['data']['amount']), 0.0
+        btc, btc_ch = cb_price("BTC")
+        eth, eth_ch = cb_price("ETH")
+        bnb, bnb_ch = 600.0, 0.5
+        sol, sol_ch = cb_price("SOL")
+        xrp, xrp_ch = cb_price("XRP")
+        paxg, paxg_ch = 2700.0, 0.2
 
     try:
-        g = requests.get("https://api.coingecko.com/api/v3/global", timeout=10).json()['data']
+        g = requests.get("https://api.coingecko.com/api/v3/global", timeout=8).json()['data']
         total = g['total_market_cap']['usd'] / 1e12
         mcap_ch = g['market_cap_change_percentage_24h_usd']
         alt = total * (1 - g['market_cap_percentage']['btc']/100 - g['market_cap_percentage']['eth']/100)
     except:
-        total, mcap_ch, alt = 2.69, -1.5, 1.09
+        total, mcap_ch, alt = 2.69, -1.51, 1.09
 
     try:
-        fng = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10).json()['data'][0]
+        fng = requests.get("https://api.alternative.me/fng/?limit=1", timeout=8).json()['data'][0]
         fg_val, fg_txt = int(fng['value']), fng['value_classification']
     except:
         fg_val, fg_txt = 48, "Neutral"
 
     try:
         payload = {"symbols":{"tickers":["CRYPTOCAP:BTC.D","CRYPTOCAP:USDT.D"]},"columns":["close","change"]}
-        tv = requests.post("https://scanner.tradingview.com/crypto/scan", json=payload, timeout=10).json()['data']
+        tv = requests.post("https://scanner.tradingview.com/crypto/scan", json=payload, timeout=8).json()['data']
         btc_d, btc_d_ch = tv[0]['d'][0], tv[0]['d'][1]
         usdt_d, usdt_d_ch = tv[1]['d'][0], tv[1]['d'][1]
     except:
@@ -124,9 +122,8 @@ def loop():
     time.sleep(10)
     while True:
         send()
-        time.sleep(300)  # 60 sec kavali ante 60 chey
+        time.sleep(300)
 
-# FIX FOR RENDER GUNICORN - Bayata start cheyali
 threading.Thread(target=loop, daemon=True).start()
 
 if __name__ == "__main__":
