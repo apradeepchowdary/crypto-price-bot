@@ -91,7 +91,7 @@ def loop():
     time.sleep(10)
     while True:
         send()
-        time.sleep(3600)
+        time.sleep(300)
 
 # --- IMPORTANT FIX FOR RENDER + GUNICORN ---
 # Ikkada start chestene Render lo work avuddi
